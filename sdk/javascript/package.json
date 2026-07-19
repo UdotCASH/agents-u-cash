@@ -1,0 +1,14 @@
+{
+  "name": "agents-u-cash",
+  "version": "0.1.0",
+  "description": "Zero-dependency JavaScript client for the agents.u.cash 402 Online Protocol API — non-custodial agent payments (buy + sell) over HTTPS.",
+  "type": "module",
+  "main": "index.js",
+  "exports": "./index.js",
+  "keywords": ["agents.u.cash", "x402", "402", "payments", "crypto", "non-custodial", "mcp", "ai-agents"],
+  "license": "MIT",
+  "homepage": "https://agents.u.cash",
+  "repository": "github:ageesen/pay-u-cash",
+  "files": ["index.js", "README.md"],
+  "engines": { "node": ">=18" }
+}

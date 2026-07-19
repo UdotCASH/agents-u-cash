@@ -1,0 +1,699 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "agents.u.cash",
+        "version": "0.1.0",
+        "description": "Agent + merchant product surface for the 402 Online Protocol \u2014 multi-coin, non-custodial HTTP-402 payments. Two-sided: sell (get paid to your own wallet) and buy (pay for resources). Live reference implementation; protocol spec at https://402.onl.",
+        "contact": {
+            "url": "https://github.com/ageesen/pay-u-cash"
+        }
+    },
+    "servers": [
+        {
+            "url": "https://agents.u.cash",
+            "description": "agents.u.cash"
+        }
+    ],
+    "tags": [
+        {
+            "name": "Account",
+            "description": "Signup, activation, wallets, webhook, settlement log"
+        },
+        {
+            "name": "Sell (402)",
+            "description": "Create resources + build the multi-coin accepts[]"
+        },
+        {
+            "name": "Buy",
+            "description": "Fetch the 402 door, pay, and settle a payment (public)"
+        }
+    ],
+    "components": {
+        "securitySchemes": {
+            "ApiKey": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Api-Key",
+                "description": "The api_key from POST /v1/signup."
+            }
+        },
+        "schemas": {
+            "Signup": {
+                "type": "object",
+                "required": [
+                    "email",
+                    "password"
+                ],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email"
+                    },
+                    "password": {
+                        "type": "string",
+                        "minLength": 8
+                    },
+                    "primary_wallet": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Wallet": {
+                "type": "object",
+                "required": [
+                    "asset",
+                    "address"
+                ],
+                "properties": {
+                    "asset": {
+                        "type": "string",
+                        "description": "cryptocurrency code, e.g. btc, eth, sol, trx, usdt"
+                    },
+                    "address": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Resource": {
+                "type": "object",
+                "required": [
+                    "amount"
+                ],
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "fiat price, e.g. 0.05"
+                    },
+                    "currency": {
+                        "type": "string",
+                        "default": "USD"
+                    },
+                    "accepted_assets": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "defaults to all configured wallets"
+                    },
+                    "webhook_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "notified (HMAC-signed) on settlement"
+                    }
+                }
+            },
+            "Verify": {
+                "type": "object",
+                "required": [
+                    "challengeId",
+                    "hash"
+                ],
+                "properties": {
+                    "challengeId": {
+                        "type": "string",
+                        "description": "from an accepts[] entry"
+                    },
+                    "hash": {
+                        "type": "string",
+                        "description": "on-chain transaction hash"
+                    }
+                }
+            },
+            "Stripe": {
+                "type": "object",
+                "required": [
+                    "secret_key",
+                    "product_id",
+                    "webhook_secret"
+                ],
+                "description": "Your own Stripe account keys \u2014 enables the card (redirect) rail. Verified against Stripe before storing; secrets are never returned in full.",
+                "properties": {
+                    "secret_key": {
+                        "type": "string",
+                        "description": "sk_live_... or sk_test_..."
+                    },
+                    "product_id": {
+                        "type": "string",
+                        "description": "a one-time product id (prod_...)"
+                    },
+                    "webhook_secret": {
+                        "type": "string",
+                        "description": "whsec_... from registering the webhook endpoint"
+                    },
+                    "publishable_key": {
+                        "type": "string",
+                        "description": "optional pk_live_... or pk_test_..."
+                    }
+                }
+            }
+        }
+    },
+    "paths": {
+        "/v1/signup": {
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Register an agent account (wallet-first; returns the api_key immediately, no email loop)",
+                "security": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Signup"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{api_key, activated, next}"
+                    },
+                    "400": {
+                        "description": "validation error"
+                    }
+                }
+            }
+        },
+        "/v1/top-up": {
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Create a credit top-up checkout (>= $1; activates the account on confirmation; allowed pre-activation)",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "amount": {
+                                        "type": "number",
+                                        "minimum": 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{url, amount, activated, next}"
+                    }
+                }
+            }
+        },
+        "/v1/agent": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Account snapshot: activation, balance, wallets, webhook URL, earnings summary",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{email, activated, primary_wallet, credit_balance, webhook_url, wallets, settlements_count, total_earned}"
+                    },
+                    "402": {
+                        "description": "agent not activated"
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Set the settlement webhook URL {webhook_url}",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "webhook_url": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{webhook_url}"
+                    }
+                }
+            }
+        },
+        "/v1/wallets": {
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Set the agent's own receive address for an asset (where buyer funds land)",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Wallet"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{asset, address}"
+                    },
+                    "400": {
+                        "description": "uxc_unknown_asset | uxc_bad_address"
+                    }
+                }
+            }
+        },
+        "/v1/stripe": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Masked Stripe config + the webhook endpoint to register",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{configured, active, mode, secret_key(masked), product_id, webhook_secret(masked), publishable_key, webhook_endpoint, webhook_events}"
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Connect the agent's OWN Stripe account (card rail); verifies the key + product against Stripe, then stores",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Stripe"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "masked config + webhook_endpoint"
+                    },
+                    "400": {
+                        "description": "uxc_invalid_request | uxc_stripe_invalid"
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Disconnect Stripe (disables card payments)",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{configured:false, cleared:true}"
+                    }
+                }
+            }
+        },
+        "/v1/custom-tokens": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "List the agent custom tokens",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{custom_tokens:[{code,type,network,name,contract_address,decimals}]}"
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Add a custom token (ERC-20/TRC-20/SPL); then POST /v1/wallets to set its receive address. Auto-detected on-chain like any coin.",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": [
+                                    "type",
+                                    "code",
+                                    "contract_address",
+                                    "decimals",
+                                    "name"
+                                ],
+                                "properties": {
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "erc-20",
+                                            "bep-20",
+                                            "base-20",
+                                            "polygon-20",
+                                            "arb-20",
+                                            "op-20",
+                                            "avax-20",
+                                            "trc-20",
+                                            "spl"
+                                        ]
+                                    },
+                                    "code": {
+                                        "type": "string"
+                                    },
+                                    "contract_address": {
+                                        "type": "string"
+                                    },
+                                    "decimals": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 36
+                                    },
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "rate": {
+                                        "type": "string"
+                                    },
+                                    "rate_url": {
+                                        "type": "string",
+                                        "format": "uri"
+                                    },
+                                    "confirmations": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 200
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "the stored token"
+                    },
+                    "400": {
+                        "description": "uxc_invalid_request | uxc_custom_token_exists"
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Remove a custom token by code",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{deleted, custom_tokens}"
+                    },
+                    "404": {
+                        "description": "uxc_not_found"
+                    }
+                }
+            }
+        },
+        "/v1/settings": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "The agent safe settings: confirmations policy (default + per-coin + value-increase), webhook url + signing secret, currency, payment preferences, notification email, branding",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{confirmations:{default,coins,increase}, webhook:{url,secret}, currency, payment:{accept_underpayments,redirect}, notifications:{email}, branding:{brand_name,logo_url,logo_url_dark,color_1,color_2,color_3}}"
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Partially update the agent safe settings (any subset). webhook.rotate_secret=true mints a new signing secret. No custodial/node/private-key/payout fields.",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "confirmations": {
+                                        "type": "object"
+                                    },
+                                    "webhook": {
+                                        "type": "object"
+                                    },
+                                    "currency": {
+                                        "type": "string"
+                                    },
+                                    "payment": {
+                                        "type": "object"
+                                    },
+                                    "notifications": {
+                                        "type": "object"
+                                    },
+                                    "branding": {
+                                        "type": "object"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "the full updated shape"
+                    }
+                }
+            }
+        },
+        "/v1/settlements": {
+            "get": {
+                "tags": [
+                    "Account"
+                ],
+                "summary": "The agent's earnings log (settled + underpaid resource payments)",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{settlements:[...]}"
+                    }
+                }
+            }
+        },
+        "/v1/resources": {
+            "post": {
+                "tags": [
+                    "Sell (402)"
+                ],
+                "summary": "Create a priced resource",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Resource"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{res_id, amount, currency, accepted_assets}"
+                    }
+                }
+            },
+            "get": {
+                "tags": [
+                    "Sell (402)"
+                ],
+                "summary": "List resources, or fetch one with ?res_id= (each carries a settled flag)",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{resources:[...]} | one resource"
+                    }
+                }
+            }
+        },
+        "/v1/challenge": {
+            "post": {
+                "tags": [
+                    "Sell (402)"
+                ],
+                "summary": "Build the multi-coin 402 accepts[] for a resource {res_id}",
+                "security": [
+                    {
+                        "ApiKey": []
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": [
+                                    "res_id"
+                                ],
+                                "properties": {
+                                    "res_id": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{res_id, amount, currency, accepts:[...]}"
+                    }
+                }
+            }
+        },
+        "/v1/verify": {
+            "post": {
+                "tags": [
+                    "Buy"
+                ],
+                "summary": "Optional instant settle (POST the on-chain tx hash). Buyer-push: callable with just the challengeId (no key) after paying, OR with the seller X-Api-Key. The platform also auto-detects the on-chain payment.",
+                "security": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Verify"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{settled:true} | {status:pending, confirmations, required} | {status:underpaid}"
+                    },
+                    "404": {
+                        "description": "challenge not found"
+                    },
+                    "410": {
+                        "description": "challenge expired"
+                    }
+                }
+            }
+        },
+        "/r/{id}": {
+            "get": {
+                "tags": [
+                    "Buy"
+                ],
+                "summary": "The 402 door \u2014 HTTP 402 + accepts[] (machine), a payable HTML page (browser), or 200 if settled. Public.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "402": {
+                        "description": "accepts[]"
+                    },
+                    "200": {
+                        "description": "settled or the HTML page"
+                    }
+                }
+            }
+        }
+    }
+}
