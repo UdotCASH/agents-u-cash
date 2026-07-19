@@ -22,6 +22,9 @@ export class AgentsUCash {
   constructor({ apiKey = '', baseUrl = DEFAULT_BASE_URL } = {}) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    if (!this.baseUrl.startsWith('https://') && !this.baseUrl.startsWith('http://localhost')) {
+      throw new Error('baseUrl must use HTTPS (or http://localhost for development)');
+    }
   }
 
   /** Internal: perform a JSON request and return the parsed `response` (throws on API error). */

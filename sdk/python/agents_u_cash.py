@@ -38,6 +38,8 @@ class AgentsUCash:
     def __init__(self, api_key="", base_url=DEFAULT_BASE_URL):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        if not self.base_url.startswith("https://") and not self.base_url.startswith("http://localhost"):
+            raise ValueError("base_url must use HTTPS (or http://localhost for development)")
 
     def _request(self, method, path, body=None, query=None, auth=True):
         url = self.base_url + path
