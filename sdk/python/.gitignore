@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+# build artifacts (python -m build) — never ship to the repo
+dist/
+build/
+*.egg-info/

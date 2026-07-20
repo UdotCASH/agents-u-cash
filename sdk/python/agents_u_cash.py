@@ -64,13 +64,23 @@ class AgentsUCash:
             payload = json.loads(text) if text else {}
         except ValueError:
             payload = {"success": False, "message": text}
-        if not payload or payload.get("success") is not True:
+        if "success" in payload:
+            # v1 API envelope {success, response, ...}
+            if payload.get("success") is not True:
+                raise AgentsUCashError(
+                    payload.get("message", "HTTP %s" % status),
+                    code=payload.get("error_code", "http_error"),
+                    status=status,
+                )
+            return payload["response"]
+        # Raw envelope (UCP checkout/order responses have no success wrapper): 2xx = success.
+        if not (200 <= status < 300):
             raise AgentsUCashError(
-                payload.get("message", "HTTP %s" % status),
+                payload.get("error") or payload.get("message") or ("HTTP %s" % status),
                 code=payload.get("error_code", "http_error"),
                 status=status,
             )
-        return payload["response"]
+        return payload
 
     # ----- account -----
     def signup(self, email, password, primary_wallet=None):
@@ -186,3 +196,40 @@ class AgentsUCash:
             with urllib.request.urlopen(req) as resp:
                 return resp.read().decode("utf-8")
         return self._request("GET", "/r/" + quote(res_id), auth=False)
+
+    # ----- UCP checkout sessions (buyer-side; merchant from host or ?cloud=) -----
+    def create_checkout(self, line_items, currency=None, buyer=None, context=None, cloud=None):
+        """Create a UCP checkout session (multi-item, mixed-currency cart). The merchant is resolved from the
+        custom-domain base_url, or from `cloud` (a merchant token) on the shared platform host. No API key.
+        Returns {id, status, currency, line_items, totals, ap2:{merchant_authorization, nonce}}."""
+        body = {"line_items": line_items}
+        if currency is not None: body["currency"] = currency
+        if buyer is not None: body["buyer"] = buyer
+        if context is not None: body["context"] = context
+        return self._request("POST", "/checkout-sessions", body=body, query={"cloud": cloud} if cloud else None, auth=False)
+
+    def get_checkout(self, id, cloud=None):
+        """Fetch a checkout session by id (status: incomplete -> ready_for_complete -> completed)."""
+        return self._request("GET", f"/checkout-sessions/{quote(id)}", query={"cloud": cloud} if cloud else None, auth=False)
+
+    def complete_checkout(self, id, ap2=None, cloud=None):
+        """Mint payment challenges -> ready_for_complete. Optional `ap2={'checkout_mandate': ...}` for AP2
+        (dev.ucp.shopping.ap2_mandate) holder-proof buyer authorization (SD-JWT-VC); verified, else raises 401."""
+        body = {"ap2": ap2} if ap2 else {}
+        return self._request("POST", f"/checkout-sessions/{quote(id)}/complete", body=body, query={"cloud": cloud} if cloud else None, auth=False)
+
+    def cancel_checkout(self, id, cloud=None):
+        """Cancel a checkout session."""
+        return self._request("POST", f"/checkout-sessions/{quote(id)}/cancel", query={"cloud": cloud} if cloud else None, auth=False)
+
+    def get_order(self, id, cloud=None):
+        """A checkout session viewed as a UCP order (per-item fulfillment status)."""
+        return self._request("GET", f"/orders/{quote(id)}", query={"cloud": cloud} if cloud else None, auth=False)
+
+    def search_catalog(self, query=None, filters=None, pagination=None, cloud=None):
+        """Search the merchant catalog (text + price filter + pagination)."""
+        body = {}
+        if query is not None: body["query"] = query
+        if filters is not None: body["filters"] = filters
+        if pagination is not None: body["pagination"] = pagination
+        return self._request("POST", "/catalog/search", body=body, query={"cloud": cloud} if cloud else None, auth=False)

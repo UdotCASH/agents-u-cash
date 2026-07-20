@@ -47,6 +47,25 @@ result = buyer.verify(door["accepts"][0]["challengeId"], tx_hash)
 
 A human-friendly payable page is also available: `buyer.view_door(res_id, html=True)` returns the HTML.
 
+## UCP checkout sessions (buyer)
+
+Multi-item, mixed-currency carts over the [Universal Commerce Protocol](https://ucp.dev). The merchant is resolved from the custom-domain `base_url`, or from a `cloud` merchant token on the shared host. No API key.
+
+```python
+buyer = AgentsUCash()   # base_url = the merchant's domain (or the platform host + cloud)
+cart = buyer.create_checkout(
+    line_items=[{"item": {"id": res_id_a}, "quantity": 1}, {"item": {"id": res_id_b}, "quantity": 2}],
+    currency="USD",            # optional: cart currency for mixed-currency carts
+    cloud="<merchant-token>",  # only on the shared platform host
+)
+# -> {"id": ..., "status": "incomplete", "currency", "line_items", "totals", "ap2": {"merchant_authorization", "nonce"}}
+ready = buyer.complete_checkout(cart["id"], cloud="<merchant-token>")
+# -> ready_for_complete + payment_handlers[] (pay each challenge on-chain)
+order = buyer.get_order(cart["id"], cloud="<merchant-token>")   # per-item fulfillment status
+```
+
+Optional AP2 (`dev.ucp.shopping.ap2_mandate`): pass `complete_checkout(id, ap2={"checkout_mandate": ...}, cloud=...)` with a buyer-signed SD-JWT-VC for holder-proof authorization. Responses are RFC 9421-signed (ES256) with the merchant key.
+
 ## API
 
 | Method | Auth | Description |
@@ -70,6 +89,12 @@ A human-friendly payable page is also available: `buyer.view_door(res_id, html=T
 | `verify(challenge_id, hash)` | key optional | Verify + settle (buyer-push: no key needed) |
 | `get_settlements()` | key | Earnings log |
 | `view_door(res_id, html=False)` | — | The public 402 door (JSON, or HTML) |
+| `create_checkout(line_items, currency=None, buyer=None, context=None, cloud=None)` | — | UCP checkout session (multi-item, mixed-currency cart) |
+| `get_checkout(id, cloud=None)` | — | Fetch a checkout session |
+| `complete_checkout(id, ap2=None, cloud=None)` | — | Mint challenges -> ready_for_complete (optional AP2 mandate) |
+| `cancel_checkout(id, cloud=None)` | — | Cancel a checkout session |
+| `get_order(id, cloud=None)` | — | A checkout session as a UCP order (per-item fulfillment) |
+| `search_catalog(query=None, filters=None, pagination=None, cloud=None)` | — | Search the merchant catalog |
 
 All calls return the parsed `response` dict and raise `AgentsUCashError` on API errors (which carries `.code` and `.status`).
 

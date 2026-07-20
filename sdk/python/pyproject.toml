@@ -1,6 +1,6 @@
 [project]
 name = "agents-u-cash"
-version = "0.1.0"
+version = "0.2.1"
 description = "Zero-dependency Python client for the agents.u.cash 402 Online Protocol API — non-custodial agent payments (buy + sell)."
 readme = "README.md"
 requires-python = ">=3.7"
@@ -10,7 +10,7 @@ keywords = ["agents.u.cash", "x402", "402", "payments", "crypto", "non-custodial
 
 [project.urls]
 Homepage = "https://agents.u.cash"
-Repository = "https://github.com/ageesen/pay-u-cash"
+Repository = "https://github.com/UdotCash/agents-u-cash"
 
 [build-system]
 requires = ["setuptools>=61"]

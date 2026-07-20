@@ -2,10 +2,10 @@
     "openapi": "3.1.0",
     "info": {
         "title": "agents.u.cash",
-        "version": "0.1.0",
-        "description": "Agent + merchant product surface for the 402 Online Protocol \u2014 multi-coin, non-custodial HTTP-402 payments. Two-sided: sell (get paid to your own wallet) and buy (pay for resources). Live reference implementation; protocol spec at https://402.onl.",
+        "version": "0.2.0",
+        "description": "Agent + merchant product surface for the 402 Online Protocol \u2014 multi-coin, non-custodial HTTP-402 payments. Two-sided: sell (get paid to your own wallet) and buy (pay for resources). UCP (ucp.dev) discovery + multi-item mixed-currency checkout sessions + AP2 mandates + RFC 9421-signed responses. Live reference implementation; protocol spec at https://402.onl.",
         "contact": {
-            "url": "https://github.com/ageesen/pay-u-cash"
+            "url": "https://github.com/UdotCash/agents-u-cash"
         }
     },
     "servers": [
@@ -26,6 +26,10 @@
         {
             "name": "Buy",
             "description": "Fetch the 402 door, pay, and settle a payment (public)"
+        },
+        {
+            "name": "UCP",
+            "description": "Universal Commerce Protocol: discovery + multi-item checkout sessions + AP2 mandates (public; merchant resolved from host or ?cloud=)"
         }
     ],
     "components": {
@@ -143,6 +147,58 @@
                     "publishable_key": {
                         "type": "string",
                         "description": "optional pk_live_... or pk_test_..."
+                    }
+                }
+            },
+            "CheckoutSession": {
+                "type": "object",
+                "required": [
+                    "line_items"
+                ],
+                "description": "UCP buyer checkout (multi-item, mixed-currency). The merchant is resolved from the host or ?cloud=, NOT X-Api-Key.",
+                "properties": {
+                    "line_items": {
+                        "type": "array",
+                        "description": "one entry per item",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "item": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "string",
+                                            "description": "resource res_id or checkout slug"
+                                        }
+                                    }
+                                },
+                                "quantity": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "default": 1
+                                }
+                            }
+                        }
+                    },
+                    "currency": {
+                        "type": "string",
+                        "description": "cart currency for mixed-currency carts (default: the shared item currency, else the merchant default)"
+                    },
+                    "buyer": {
+                        "type": "object"
+                    },
+                    "context": {
+                        "type": "object"
+                    }
+                }
+            },
+            "Ap2": {
+                "type": "object",
+                "description": "AP2 mandate (dev.ucp.shopping.ap2_mandate) \u2014 optional holder-proof buyer authorization on complete.",
+                "properties": {
+                    "checkout_mandate": {
+                        "type": "string",
+                        "description": "buyer-signed SD-JWT-VC binding the payment to this checkout"
                     }
                 }
             }
@@ -691,6 +747,185 @@
                     },
                     "200": {
                         "description": "settled or the HTML page"
+                    }
+                }
+            }
+        },
+        "/checkout-sessions": {
+            "post": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "Create a UCP checkout session (multi-item, mixed-currency cart). Merchant resolved from the host or ?cloud=.",
+                "security": [],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CheckoutSession"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{id, status, currency, line_items, totals, ap2:{merchant_authorization, nonce}}"
+                    }
+                }
+            }
+        },
+        "/checkout-sessions/{id}": {
+            "get": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "Fetch a checkout session (status: incomplete -> ready_for_complete -> completed)",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "cloud",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the session"
+                    },
+                    "404": {
+                        "description": "not found"
+                    }
+                }
+            }
+        },
+        "/checkout-sessions/{id}/complete": {
+            "post": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "Mint payment challenges -> ready_for_complete. Optional AP2: {ap2:{checkout_mandate}} holder-proof (verified, else 401).",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Ap2"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "ready_for_complete + payment_handlers[]"
+                    },
+                    "401": {
+                        "description": "mandate_invalid_signature | mandate_expired | mandate_scope_mismatch"
+                    }
+                }
+            }
+        },
+        "/checkout-sessions/{id}/cancel": {
+            "post": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "Cancel a checkout session",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "canceled"
+                    }
+                }
+            }
+        },
+        "/orders/{id}": {
+            "get": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "A checkout session viewed as a UCP order (per-item fulfillment status)",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{id, checkout_id, currency, line_items, fulfillment, totals}"
+                    },
+                    "404": {
+                        "description": "not found"
+                    }
+                }
+            }
+        },
+        "/catalog/search": {
+            "post": {
+                "tags": [
+                    "UCP"
+                ],
+                "summary": "Search the merchant catalog (text + price filter + pagination)",
+                "security": [],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string"
+                                    },
+                                    "filters": {
+                                        "type": "object"
+                                    },
+                                    "pagination": {
+                                        "type": "object"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "{products[], pagination}"
                     }
                 }
             }

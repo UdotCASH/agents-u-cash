@@ -47,13 +47,23 @@ export class AgentsUCash {
     if (text) {
       try { data = JSON.parse(text); } catch { data = { success: false, message: text }; }
     }
-    if (!data || data.success === false) {
+    if (data && data.success === false) {
       const err = new Error((data && data.message) || ('HTTP ' + res.status));
       err.code = data && data.error_code ? data.error_code : 'http_error';
       err.status = res.status;
       throw err;
     }
-    return data.response;
+    if (data && data.success === true) {
+      return data.response; // v1 API envelope {success, response}
+    }
+    // Raw envelope (UCP checkout/order responses have no success wrapper): HTTP status gates success.
+    if (!res.ok) {
+      const err = new Error((data && (data.error || data.message)) || ('HTTP ' + res.status));
+      err.code = data && data.error_code ? data.error_code : 'http_error';
+      err.status = res.status;
+      throw err;
+    }
+    return data;
   }
 
   // ---------- account ----------
@@ -183,6 +193,53 @@ export class AgentsUCash {
         .then((r) => r.text());
     }
     return this.#request('GET', '/r/' + encodeURIComponent(resId), { auth: false });
+  }
+
+  // ---------- UCP checkout sessions (buyer-side; merchant from host or ?cloud=) ----------
+  /**
+   * Create a UCP checkout session (multi-item, mixed-currency cart). The merchant is resolved from the
+   * custom-domain baseUrl, or from `cloud` (a merchant token) on the shared platform host. No API key.
+   * Returns {id, status, currency, line_items, totals, ap2:{merchant_authorization, nonce}}.
+   */
+  createCheckout({ lineItems, currency, buyer, context, cloud } = {}) {
+    const body = { line_items: lineItems };
+    if (currency !== undefined) body.currency = currency;
+    if (buyer !== undefined) body.buyer = buyer;
+    if (context !== undefined) body.context = context;
+    return this.#request('POST', '/checkout-sessions', { body, auth: false, query: cloud ? { cloud } : null });
+  }
+
+  /** Fetch a checkout session by id (status: incomplete -> ready_for_complete -> completed). */
+  getCheckout(id, { cloud } = {}) {
+    return this.#request('GET', '/checkout-sessions/' + encodeURIComponent(id), { auth: false, query: cloud ? { cloud } : null });
+  }
+
+  /**
+   * Mint payment challenges -> ready_for_complete. Optional `ap2: { checkout_mandate }` for AP2
+   * (dev.ucp.shopping.ap2_mandate) holder-proof buyer authorization (SD-JWT-VC); verified, else throws 401.
+   */
+  completeCheckout(id, { ap2, cloud } = {}) {
+    const body = ap2 ? { ap2 } : {};
+    return this.#request('POST', '/checkout-sessions/' + encodeURIComponent(id) + '/complete', { body, auth: false, query: cloud ? { cloud } : null });
+  }
+
+  /** Cancel a checkout session. */
+  cancelCheckout(id, { cloud } = {}) {
+    return this.#request('POST', '/checkout-sessions/' + encodeURIComponent(id) + '/cancel', { auth: false, query: cloud ? { cloud } : null });
+  }
+
+  /** A checkout session viewed as a UCP order (per-item fulfillment status). */
+  getOrder(id, { cloud } = {}) {
+    return this.#request('GET', '/orders/' + encodeURIComponent(id), { auth: false, query: cloud ? { cloud } : null });
+  }
+
+  /** Search the merchant catalog (text + price filter + pagination). */
+  searchCatalog({ query, filters, pagination, cloud } = {}) {
+    const body = {};
+    if (query !== undefined) body.query = query;
+    if (filters !== undefined) body.filters = filters;
+    if (pagination !== undefined) body.pagination = pagination;
+    return this.#request('POST', '/catalog/search', { body, auth: false, query: cloud ? { cloud } : null });
   }
 }
 

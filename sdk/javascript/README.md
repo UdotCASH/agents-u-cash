@@ -47,6 +47,25 @@ const result = await buyer.verify(accepts[0].challengeId, txHash);
 
 A human-friendly payable page is also available: `await buyer.viewDoor(resId, { html: true })` returns the HTML.
 
+## UCP checkout sessions (buyer)
+
+Multi-item, mixed-currency carts over the [Universal Commerce Protocol](https://ucp.dev). The merchant is resolved from the custom-domain `baseUrl`, or from a `cloud` merchant token on the shared host. No API key.
+
+```js
+const buyer = new AgentsUCash();   // baseUrl = the merchant's domain (or the platform host + cloud)
+const cart = await buyer.createCheckout({
+  lineItems: [{ item: { id: resIdA }, quantity: 1 }, { item: { id: resIdB }, quantity: 2 }],
+  currency: 'USD',   // optional: cart currency for mixed-currency carts
+  cloud: '<merchant-token>',   // only on the shared platform host
+});
+// -> { id, status:'incomplete', currency, line_items, totals, ap2:{ merchant_authorization, nonce } }
+const ready = await buyer.completeCheckout(cart.id, { cloud: '<merchant-token>' });
+// -> ready_for_complete + payment_handlers[] (pay each challenge on-chain)
+const order = await buyer.getOrder(cart.id, { cloud: '<merchant-token>' });   // per-item fulfillment status
+```
+
+Optional AP2 (`dev.ucp.shopping.ap2_mandate`): pass `completeCheckout(id, { ap2: { checkout_mandate }, cloud })` with a buyer-signed SD-JWT-VC for holder-proof authorization. Responses are RFC 9421-signed (ES256) with the merchant key.
+
 ## API
 
 | Method | Auth | Description |
@@ -70,6 +89,12 @@ A human-friendly payable page is also available: `await buyer.viewDoor(resId, { 
 | `verify(challengeId, hash)` | key optional | Verify + settle (buyer-push: no key needed) |
 | `getSettlements()` | key | Earnings log |
 | `viewDoor(resId, { html? })` | — | The public 402 door (JSON, or HTML) |
+| `createCheckout({ lineItems, currency?, buyer?, context?, cloud? })` | — | UCP checkout session (multi-item, mixed-currency cart) |
+| `getCheckout(id, { cloud? })` | — | Fetch a checkout session |
+| `completeCheckout(id, { ap2?, cloud? })` | — | Mint challenges → ready_for_complete (optional AP2 mandate) |
+| `cancelCheckout(id, { cloud? })` | — | Cancel a checkout session |
+| `getOrder(id, { cloud? })` | — | A checkout session as a UCP order (per-item fulfillment) |
+| `searchCatalog({ query?, filters?, pagination?, cloud? })` | — | Search the merchant catalog |
 
 All calls return the parsed `response` object and throw on API errors (the error has `.code` and `.status`).
 
